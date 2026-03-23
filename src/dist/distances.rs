@@ -21,7 +21,7 @@ use super::disteez::*;
 ///
 ///
 use std::os::raw::*;
-
+use log::info;
 use num_traits::float::*;
 
 #[allow(unused)]
@@ -52,6 +52,7 @@ enum DistKind {
 /// For other distances implement the trait possibly with the newtype pattern
 pub trait Distance<T: Send + Sync> {
     fn eval(&self, va: &[T], vb: &[T]) -> f32;
+    //fn distort_eval(&self, va: &[T], vb: &[T], alpha: f32, p: f32) -> f32;
 }
 
 /// Special forbidden computation distance. It is associated to a unit NoData structure
@@ -65,6 +66,11 @@ impl<T: Send + Sync> Distance<T> for NoDist {
         log::error!("panic error : cannot call eval on NoDist");
         panic!("cannot call distance with NoDist");
     }
+
+    // fn distort_eval(&self, _va: &[T], _vb: &[T], alpha: f32, p: f32) -> f32 {
+    //     log::error!("panic error : cannot call eval on NoDist");
+    //     panic!("cannot call distance with NoDist");
+    // }
 } // end impl block for NoDist
 
 /// L1 distance : implemented for i32, f64, i64, u32 , u16 , u8 and with Simd avx2 for f32
@@ -460,7 +466,23 @@ implementDistJensenShannon!(f32);
 /// A special implementation for f64 is made but exclusively dedicated to SuperMinHash usage in crate [probminhash](https://crates.io/crates/probminhash).  
 /// It could be made generic with the PartialEq implementation for f64 and f32 in unsable source of Rust
 #[derive(Default, Copy, Clone)]
-pub struct DistHamming;
+pub struct DistHamming {
+    pub alpha: f32, 
+    pub p: f32
+}
+
+impl DistHamming {
+    pub fn new(alpha: f32, p: f32) -> Self {
+        info!("initializing custom DistHamming with alpha={}, p={}", alpha, p);
+        Self { alpha, p }
+    }
+    pub fn default() -> Self {
+        Self {
+            alpha: 1.0,
+            p: 1.0,
+        }
+    }
+}
 
 macro_rules! implementHammingDistance (
     ($ty:ty) => (
@@ -549,7 +571,16 @@ impl Distance<u32> for DistHamming {
 #[cfg(feature = "stdsimd")]
 impl Distance<u64> for DistHamming {
     fn eval(&self, va: &[u64], vb: &[u64]) -> f32 {
-        return distance_jaccard_u64_8_simd(va, vb);
+        let mut d = distance_jaccard_u64_8_simd(va, vb);
+
+        if self.alpha < 1.0 {
+            d = d.powf(self.alpha);
+        }
+        else if self.p > 1.0 {
+            d = (1.0 + self.p * d).log(self.p);
+            d = d.min(1.0)
+        }
+        return d;
     } // end of eval
 } // end implementation Distance<u64>
 
@@ -558,7 +589,16 @@ impl Distance<u64> for DistHamming {
 #[cfg(feature = "stdsimd")]
 impl Distance<u16> for DistHamming {
     fn eval(&self, va: &[u16], vb: &[u16]) -> f32 {
-        return distance_jaccard_u16_32_simd(va, vb);
+        let mut d = distance_jaccard_u16_32_simd(va, vb);
+
+        if self.alpha < 1.0 {
+            d = d.powf(self.alpha);
+        }
+        else if self.p > 1.0 {
+            d = (1.0 + self.p * d).log(self.p);
+            d = d.min(1.0);
+        }
+        return d;
     }
 }
 // i32 is implmeented by simd
@@ -1078,7 +1118,7 @@ mod tests {
                 .zip(vb.iter())
                 .map(|(a, b)| if a != b { 1 } else { 0 })
                 .sum();
-            let h_dist = DistHamming.eval(&va, &vb);
+            let h_dist = DistHamming::default().eval(&va, &vb);
             let easy_dist = easy_dist as f32 / va.len() as f32;
             let j_exact = ((i / 2) as f32) / (i as f32);
             log::debug!(
@@ -1126,7 +1166,7 @@ mod tests {
                 .zip(vb.iter())
                 .map(|(a, b)| if a != b { 1 } else { 0 })
                 .sum();
-            let h_dist = DistHamming.eval(&va, &vb);
+            let h_dist = DistHamming::default().eval(&va, &vb);
             let easy_dist = easy_dist as f32 / va.len() as f32;
             let j_exact = ((i / 2) as f32) / (i as f32);
             log::debug!(
@@ -1162,7 +1202,29 @@ mod tests {
     fn test_feature_simd() {
         init_log();
         log::info!("I have activated stdsimd");
-    } // end of test_feature_simd
+    } 
+
+    #[cfg(feature = "stdsimd")]
+    #[test]
+    fn test_hamming_alpha_exp_simd() {
+        let a: Vec<u16> = vec![1, 2, 3];
+        let b: Vec<u16> = vec![1, 2, 4];
+        let d = DistHamming::new(0.5, 1.0);
+        let dist = d.eval(&a, &b);
+        assert!((dist - 0.5773).abs() < 1e-4);
+    }
+
+    #[cfg(feature="stdsimd")]
+    #[test]
+    fn test_hamming_log_p_simd() {
+        let a: Vec<u16> = vec![1, 2, 3, 4];
+        let b: Vec<u16> = vec![1, 0, 3, 0];
+        let d = DistHamming::new(1.0, 20.0);
+        let dist = d.eval(&a, &b);
+        assert!((dist - 0.8004).abs() < 1e-4);
+    }
+    
+    // end of test_feature_simd
 
     #[test]
     #[cfg(feature = "simdeez_f")]

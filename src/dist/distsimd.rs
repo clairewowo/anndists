@@ -142,7 +142,7 @@ pub(super) fn distance_jaccard_u32_16_simd(va: &[u32], vb: &[u32]) -> f32 {
     dist as f32 / va.len() as f32
 } // end of distance_jaccard_u32_simd
 
-pub(super) fn distance_jaccard_u16_32_simd(va: &[u16], vb: &[u16]) -> f32 {
+pub fn distance_jaccard_u16_32_simd(va: &[u16], vb: &[u16]) -> f32 {
     assert_eq!(va.len(), vb.len());
 
     let nb_lanes = u16x32::LEN; // 32
@@ -192,7 +192,7 @@ pub(super) fn distance_jaccard_f32_16_simd(va: &[f32], vb: &[f32]) -> f32 {
 } // end of distance_jaccard_u32_simd
 
 //
-pub(super) fn distance_jaccard_u64_8_simd(va: &[u64], vb: &[u64]) -> f32 {
+pub fn distance_jaccard_u64_8_simd(va: &[u64], vb: &[u64]) -> f32 {
     assert_eq!(va.len(), vb.len());
 
     let nb_lanes = u64x8::LEN; // 8
