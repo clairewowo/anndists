@@ -468,18 +468,20 @@ implementDistJensenShannon!(f32);
 #[derive(Default, Copy, Clone)]
 pub struct DistHamming {
     pub alpha: f32, 
-    pub p: f32
+    pub log_p: f32,
+    pub pow_p: usize
 }
 
 impl DistHamming {
-    pub fn new(alpha: f32, p: f32) -> Self {
-        info!("initializing custom DistHamming with alpha={}, p={}", alpha, p);
-        Self { alpha, p }
+    pub fn new(alpha: f32, log_p: f32, pow_p: usize) -> Self {
+        info!("initializing custom DistHamming with alpha={}, l={}, pow_p={}", alpha, log_p, pow_p);
+        Self { alpha, log_p, pow_p }
     }
     pub fn default() -> Self {
         Self {
             alpha: 1.0,
-            p: 1.0,
+            log_p: 1.0,
+            pow_p: 1
         }
     }
 }
@@ -571,16 +573,7 @@ impl Distance<u32> for DistHamming {
 #[cfg(feature = "stdsimd")]
 impl Distance<u64> for DistHamming {
     fn eval(&self, va: &[u64], vb: &[u64]) -> f32 {
-        let mut d = distance_jaccard_u64_8_simd(va, vb);
-
-        if self.alpha < 1.0 {
-            d = d.powf(self.alpha);
-        }
-        else if self.p > 1.0 {
-            d = (1.0 + self.p * d).log(self.p);
-            d = d.min(1.0)
-        }
-        return d;
+        return distance_jaccard_u64_8_simd(va, vb);
     } // end of eval
 } // end implementation Distance<u64>
 
@@ -594,9 +587,13 @@ impl Distance<u16> for DistHamming {
         if self.alpha < 1.0 {
             d = d.powf(self.alpha);
         }
-        else if self.p > 1.0 {
-            d = (1.0 + self.p * d).log(self.p);
+        else if self.log_p > 1.0 {
+            d = (1.0 + self.log_p * d).log(self.log_p);
             d = d.min(1.0);
+        }
+        else if self.pow_p > 1 {
+            // 2^(p-1) * (d-0.5)^p + 0.5
+            d = (2.0.powf(self.pow_p as f32 - 1.0) as f32) * (d - 0.5).powf(self.pow_p as f32) + 0.5
         }
         return d;
     }
@@ -1209,7 +1206,7 @@ mod tests {
     fn test_hamming_alpha_exp_simd() {
         let a: Vec<u16> = vec![1, 2, 3];
         let b: Vec<u16> = vec![1, 2, 4];
-        let d = DistHamming::new(0.5, 1.0);
+        let d = DistHamming::new(0.5, 1.0, 1);
         let dist = d.eval(&a, &b);
         assert!((dist - 0.5773).abs() < 1e-4);
     }
@@ -1219,9 +1216,19 @@ mod tests {
     fn test_hamming_log_p_simd() {
         let a: Vec<u16> = vec![1, 2, 3, 4];
         let b: Vec<u16> = vec![1, 0, 3, 0];
-        let d = DistHamming::new(1.0, 20.0);
+        let d = DistHamming::new(1.0, 20.0, 1);
         let dist = d.eval(&a, &b);
         assert!((dist - 0.8004).abs() < 1e-4);
+    }
+
+    #[cfg(feature="stdsimd")]
+    #[test]
+    fn test_hamming_pow_p_simd() {
+        let a: Vec<u16> = vec![1, 2, 3, 4];
+        let b: Vec<u16> = vec![1, 0, 3, 4];
+        let d = DistHamming::new(1.0, 1.0, 3);
+        let dist = d.eval(&a, &b);
+        assert!((dist - 0.4375).abs() < 1e-4);
     }
     
     // end of test_feature_simd
